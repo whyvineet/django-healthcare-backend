@@ -1,10 +1,31 @@
 # Python-generated files
 __pycache__/
-*.py[oc]
+*.py[cod]
 build/
 dist/
 wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
+venv/
+
+# Environment secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Local database files
+*.sqlite3
+
+# IDE configuration
+.vscode/
+.idea/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Generated / collected static files
+staticfiles/
