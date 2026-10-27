@@ -2,6 +2,12 @@ from django.contrib.auth.base_user import BaseUserManager
 
 
 class UserManager(BaseUserManager):
+    @classmethod
+    def normalize_email(cls, email):
+        if not email:
+            return email
+        return email.strip().lower()
+
     def create_user(self, email, name, password=None, **extra_fields):
         if not email:
             raise ValueError("An email address is required.")

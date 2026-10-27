@@ -53,6 +53,18 @@ class RegistrationTests(TestCase):
         response = self.client.post(REGISTER_URL, payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_register_duplicate_email_case_insensitive(self):
+        User.objects.create_user(
+            email="alice@example.com", name="Alice", password="StrongPass123!"
+        )
+        payload = {"name": "Alice 2", "email": "ALICE@EXAMPLE.COM", "password": "StrongPass123!"}
+        response = self.client.post(REGISTER_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        payload_mixed = {"name": "Alice 3", "email": "AliCe@Example.Com", "password": "StrongPass123!"}
+        response_mixed = self.client.post(REGISTER_URL, payload_mixed, format="json")
+        self.assertEqual(response_mixed.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_password_is_hashed(self):
         payload = {"name": "Carol", "email": "carol@example.com", "password": "StrongPass123!"}
         self.client.post(REGISTER_URL, payload, format="json")
@@ -74,6 +86,18 @@ class LoginTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("access", response.data)
         self.assertIn("refresh", response.data)
+
+    def test_login_case_insensitive(self):
+        payload = {"email": "DAVE@EXAMPLE.COM", "password": "StrongPass123!"}
+        response = self.client.post(LOGIN_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", response.data)
+
+    def test_login_mixed_case(self):
+        payload = {"email": "DaVe@Example.Com", "password": "StrongPass123!"}
+        response = self.client.post(LOGIN_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", response.data)
 
     def test_login_invalid_password(self):
         payload = {"email": "dave@example.com", "password": "WrongPassword"}

@@ -100,6 +100,25 @@ class DoctorTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Doctor.objects.filter(pk=doctor.pk).exists())
 
+    def test_other_user_cannot_update_doctor(self):
+        doctor = Doctor.objects.create(name="Dr. Creator", specialization="Neurology", created_by=self.user)
+        self.auth(self.other_user)
+        response = self.client.put(
+            doctors_detail_url(doctor.pk),
+            {"name": "Dr. HIJACKED", "specialization": "Neurology"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        doctor.refresh_from_db()
+        self.assertEqual(doctor.name, "Dr. Creator")
+
+    def test_other_user_cannot_delete_doctor(self):
+        doctor = Doctor.objects.create(name="Dr. Creator", specialization="Neurology", created_by=self.user)
+        self.auth(self.other_user)
+        response = self.client.delete(doctors_detail_url(doctor.pk))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(Doctor.objects.filter(pk=doctor.pk).exists())
+
     def test_delete_nonexistent_doctor_returns_404(self):
         self.auth()
         response = self.client.delete(doctors_detail_url(99999))

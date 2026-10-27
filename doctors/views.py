@@ -3,13 +3,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from doctors.models import Doctor
+from doctors.permissions import IsDoctorCreatorOrReadOnly
 from doctors.serializers import DoctorSerializer
 
 
 class DoctorViewSet(viewsets.ModelViewSet):
 
     serializer_class = DoctorSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDoctorCreatorOrReadOnly]
 
     def get_queryset(self):
         return Doctor.objects.all()

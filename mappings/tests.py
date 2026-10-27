@@ -111,6 +111,10 @@ class MappingTests(TestCase):
         doctor_ids = [m["doctor"] for m in response.data]
         self.assertIn(self.doctor.pk, doctor_ids)
         self.assertIn(self.doctor2.pk, doctor_ids)
+        self.assertIn("doctor_details", response.data[0])
+        doctor_names = [m["doctor_details"]["name"] for m in response.data]
+        self.assertIn(self.doctor.name, doctor_names)
+        self.assertIn(self.doctor2.name, doctor_names)
 
     def test_get_doctors_for_another_users_patient_returns_404(self):
         PatientDoctorMapping.objects.create(

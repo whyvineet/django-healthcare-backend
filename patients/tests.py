@@ -49,6 +49,13 @@ class PatientTests(TestCase):
         response = self.client.post(PATIENTS_URL, {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_create_patient_future_dob_returns_400(self):
+        self.auth(self.user_a)
+        payload = {"name": "Future Baby", "date_of_birth": "2099-01-01"}
+        response = self.client.post(PATIENTS_URL, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("date_of_birth", response.data)
+
     def test_client_cannot_set_owner(self):
         self.auth(self.user_a)
         payload = {"name": "Patient X", "created_by": self.user_b.pk}
