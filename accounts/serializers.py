@@ -16,16 +16,21 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ("name", "email", "password")
+        extra_kwargs = {
+            "email": {
+                "validators": [],
+            }
+        }
 
     def validate_email(self, value):
-        normalized = value.strip().lower()
+        normalized = User.objects.normalize_email(value)
         if User.objects.filter(email__iexact=normalized).exists():
             raise serializers.ValidationError("A user with this email already exists.")
         return normalized
 
     def create(self, validated_data):
         return User.objects.create_user(
-            email=validated_data["email"].strip().lower(),
+            email=validated_data["email"],
             name=validated_data["name"].strip(),
             password=validated_data["password"],
         )

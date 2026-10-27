@@ -19,11 +19,13 @@ class CaseInsensitiveModelBackend(ModelBackend):
             UserModel().set_password(password)
             return None
         except UserModel.MultipleObjectsReturned:
-            user = UserModel._default_manager.filter(
+            users = UserModel._default_manager.filter(
                 **{f"{UserModel.USERNAME_FIELD}__iexact": username}
-            ).first()
-            if not user:
-                return None
+            )
+            for candidate in users:
+                if candidate.check_password(password) and self.user_can_authenticate(candidate):
+                    return candidate
+            return None
 
         if user.check_password(password) and self.user_can_authenticate(user):
             return user

@@ -6,13 +6,13 @@ class UserManager(BaseUserManager):
     def normalize_email(cls, email):
         if not email:
             return email
-        return email.strip().lower()
+        return str(email).strip().lower()
 
     def create_user(self, email, name, password=None, **extra_fields):
+        email = self.normalize_email(email)
         if not email:
             raise ValueError("An email address is required.")
 
-        email = self.normalize_email(email)
         user = self.model(email=email, name=name, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)

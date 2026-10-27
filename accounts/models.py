@@ -37,11 +37,11 @@ class User(AbstractUser):
     def clean(self):
         super().clean()
         if self.email:
-            self.email = self.email.strip().lower()
+            self.email = UserManager.normalize_email(self.email)
 
     def save(self, *args, **kwargs):
         if self.email:
-            self.email = self.email.strip().lower()
+            self.email = UserManager.normalize_email(self.email)
         super().save(*args, **kwargs)
 
     def __str__(self):
