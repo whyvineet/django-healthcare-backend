@@ -1,9 +1,10 @@
-from rest_framework import status
+from django.db import IntegrityError
+from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.serializers import RegisterSerializer
+from accounts.serializers import RegisterSerializer, is_duplicate_email_error
 
 
 class RegisterView(APIView):
@@ -12,7 +13,17 @@ class RegisterView(APIView):
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
-            user = serializer.save()
+            try:
+                user = serializer.save()
+            except serializers.ValidationError as exc:
+                return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+            except IntegrityError as exc:
+                if is_duplicate_email_error(exc, request.data.get("email")):
+                    return Response(
+                        {"email": ["A user with this email already exists."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                raise
             return Response(
                 {
                     "message": "User registered successfully.",

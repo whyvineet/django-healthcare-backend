@@ -1,9 +1,15 @@
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.base_user import BaseUserManager
-from django.db import IntegrityError
-from django.test import TestCase
+from django.db import IntegrityError, connection
+from django.test import TestCase, TransactionTestCase
 from rest_framework import status
 from rest_framework.test import APIClient
+
+from accounts.serializers import RegisterSerializer, is_duplicate_email_error
 
 User = get_user_model()
 
@@ -183,3 +189,213 @@ class DatabaseConstraintRegressionTests(TestCase):
         self.assertEqual(user.email, "mixed@example.com")
         user.refresh_from_db()
         self.assertEqual(user.email, "mixed@example.com")
+
+
+class RegistrationIntegrityErrorTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_duplicate_email_integrity_error_returns_400(self):
+        with patch.object(
+            User.objects,
+            "create_user",
+            side_effect=IntegrityError('duplicate key value violates unique constraint "unique_lower_email"'),
+        ):
+            payload = {"name": "Test", "email": "racer_mock@example.com", "password": "StrongPass123!"}
+            response = self.client.post(REGISTER_URL, payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn("email", response.data)
+            self.assertEqual(response.data["email"], ["A user with this email already exists."])
+
+    def test_unrelated_integrity_error_is_reraised_in_view(self):
+        with patch.object(
+            User.objects,
+            "create_user",
+            side_effect=IntegrityError('null value in column "name" violates not-null constraint'),
+        ):
+            payload = {"name": "Test", "email": "unrelated_db@example.com", "password": "StrongPass123!"}
+            with self.assertRaises(IntegrityError):
+                self.client.post(REGISTER_URL, payload, format="json")
+
+    def test_unrelated_integrity_error_is_reraised_in_serializer(self):
+        serializer = RegisterSerializer(
+            data={"name": "Test", "email": "unrelated_ser@example.com", "password": "StrongPass123!"}
+        )
+        self.assertTrue(serializer.is_valid())
+        with patch.object(
+            User.objects,
+            "create_user",
+            side_effect=IntegrityError("insert or update violates foreign key constraint"),
+        ):
+            with self.assertRaises(IntegrityError):
+                serializer.save()
+
+    def test_is_duplicate_email_error_detection(self):
+        self.assertTrue(
+            is_duplicate_email_error(
+                IntegrityError(
+                    'duplicate key value violates unique constraint "accounts_user_email_key"\n'
+                    "DETAIL: Key (email)=(a@b.com) already exists."
+                ),
+                "a@b.com",
+            )
+        )
+        self.assertTrue(
+            is_duplicate_email_error(
+                IntegrityError(
+                    'duplicate key value violates unique constraint "unique_lower_email"\n'
+                    "DETAIL: Key (lower(email::text))=(a@b.com) already exists."
+                ),
+                "a@b.com",
+            )
+        )
+        self.assertTrue(
+            is_duplicate_email_error(
+                IntegrityError("UNIQUE constraint failed: accounts_user.email"),
+                "a@b.com",
+            )
+        )
+        self.assertTrue(
+            is_duplicate_email_error(
+                IntegrityError("UNIQUE constraint failed: accounts_user.unique_lower_email"),
+                "a@b.com",
+            )
+        )
+        self.assertFalse(
+            is_duplicate_email_error(
+                IntegrityError('insert or update on table "patients_patient" violates foreign key constraint'),
+                "a@b.com",
+            )
+        )
+        self.assertFalse(
+            is_duplicate_email_error(
+                IntegrityError('null value in column "name" of relation "accounts_user" violates not-null constraint'),
+                "a@b.com",
+            )
+        )
+        self.assertFalse(
+            is_duplicate_email_error(
+                IntegrityError('new row for relation "accounts_user" violates check constraint "chk_user"'),
+                "a@b.com",
+            )
+        )
+        self.assertFalse(
+            is_duplicate_email_error(
+                IntegrityError('duplicate key value violates unique constraint "doctors_doctor_license_number_key"'),
+                "a@b.com",
+            )
+        )
+
+
+class ConcurrentRegistrationRaceConditionTests(TransactionTestCase):
+    def test_concurrent_registration_race_condition(self):
+        email = "concurrent_race@example.com"
+        barrier = threading.Barrier(2)
+        original_validate = RegisterSerializer.validate_email
+
+        def synchronized_validate(serializer_instance, value):
+            validated_value = original_validate(serializer_instance, value)
+            try:
+                barrier.wait(timeout=5)
+            except threading.BrokenBarrierError:
+                pass
+            return validated_value
+
+        results = []
+
+        def register_worker(payload):
+            client = APIClient()
+            try:
+                response = client.post(REGISTER_URL, payload, format="json")
+                results.append((response.status_code, response.data))
+            finally:
+                connection.close()
+
+        payload1 = {"name": "Racer 1", "email": email, "password": "StrongPass123!"}
+        payload2 = {"name": "Racer 2", "email": email, "password": "StrongPass123!"}
+
+        with patch.object(RegisterSerializer, "validate_email", synchronized_validate):
+            t1 = threading.Thread(target=register_worker, args=(payload1,))
+            t2 = threading.Thread(target=register_worker, args=(payload2,))
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+        status_codes = [status_code for status_code, _ in results]
+        self.assertIn(status.HTTP_201_CREATED, status_codes)
+        self.assertIn(status.HTTP_400_BAD_REQUEST, status_codes)
+
+        for status_code, data in results:
+            if status_code == status.HTTP_400_BAD_REQUEST:
+                self.assertIn("email", data)
+                self.assertEqual(data["email"], ["A user with this email already exists."])
+        self.assertEqual(User.objects.filter(email=email).count(), 1)
+
+    def test_concurrent_registration_case_insensitive_race_condition(self):
+        email_lower = "case_race@example.com"
+        email_upper = "CASE_RACE@EXAMPLE.COM"
+        barrier = threading.Barrier(2)
+        original_validate = RegisterSerializer.validate_email
+
+        def synchronized_validate(serializer_instance, value):
+            validated_value = original_validate(serializer_instance, value)
+            try:
+                barrier.wait(timeout=5)
+            except threading.BrokenBarrierError:
+                pass
+            return validated_value
+
+        results = []
+
+        def register_worker(payload):
+            client = APIClient()
+            try:
+                response = client.post(REGISTER_URL, payload, format="json")
+                results.append((response.status_code, response.data))
+            finally:
+                connection.close()
+
+        payload1 = {"name": "Racer Lower", "email": email_lower, "password": "StrongPass123!"}
+        payload2 = {"name": "Racer Upper", "email": email_upper, "password": "StrongPass123!"}
+
+        with patch.object(RegisterSerializer, "validate_email", synchronized_validate):
+            t1 = threading.Thread(target=register_worker, args=(payload1,))
+            t2 = threading.Thread(target=register_worker, args=(payload2,))
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+        status_codes = [status_code for status_code, _ in results]
+        self.assertIn(status.HTTP_201_CREATED, status_codes)
+        self.assertIn(status.HTTP_400_BAD_REQUEST, status_codes)
+
+        for status_code, data in results:
+            if status_code == status.HTTP_400_BAD_REQUEST:
+                self.assertIn("email", data)
+                self.assertEqual(data["email"], ["A user with this email already exists."])
+
+        self.assertEqual(User.objects.filter(email__iexact=email_lower).count(), 1)
+
+    def test_concurrent_registration_thread_pool(self):
+        email = "flood_race@example.com"
+
+        def register_worker(worker_id):
+            client = APIClient()
+            try:
+                response = client.post(
+                    REGISTER_URL,
+                    {"name": f"Flood {worker_id}", "email": email, "password": "StrongPass123!"},
+                    format="json",
+                )
+                return response.status_code
+            finally:
+                connection.close()
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            status_codes = list(executor.map(register_worker, range(4)))
+
+        self.assertEqual(status_codes.count(status.HTTP_201_CREATED), 1)
+        self.assertEqual(status_codes.count(status.HTTP_400_BAD_REQUEST), 3)
+        self.assertEqual(User.objects.filter(email=email).count(), 1)
